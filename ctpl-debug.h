@@ -18,8 +18,8 @@
  *********************************************************/
 
 
-#ifndef __ctpl_thread_pool_H__
-#define __ctpl_thread_pool_H__
+#ifndef __ctpl_thread_pool_debug_H__
+#define __ctpl_thread_pool_debug_H__
 
 #include <functional>
 #include <thread>
@@ -31,8 +31,8 @@
 #include <mutex>
 #include <boost/lockfree/queue.hpp>
 
-#ifndef _ctplThreadPoolLength_
-#define _ctplThreadPoolLength_  100
+#ifndef ctplThreadPooDebuglLength
+#define ctplThreadPooDebuglLength  100
 #endif
 
 
@@ -42,14 +42,14 @@
 // ret is some return type
 
 
-namespace ctpl {
+namespace ctpl_debug {
 
     class thread_pool {
 
     public:
 
-        thread_pool() : q(_ctplThreadPoolLength_) { this->init(); }
-        thread_pool(int nThreads, int queueSize = _ctplThreadPoolLength_) : q(queueSize) { this->init(); this->resize(nThreads); }
+        thread_pool() : q(ctplThreadPooDebuglLength) { this->init(); }
+        thread_pool(int nThreads, int queueSize = ctplThreadPooDebuglLength) : q(queueSize) { this->init(); this->resize(nThreads); }
 
         // the destructor waits for all the functions in the queue to be finished
         ~thread_pool() {
@@ -161,33 +161,49 @@ namespace ctpl {
         }
 
         template<typename F, typename... Rest>
-        auto push(F && f, Rest&&... rest) ->std::future<decltype(f(rest...))> {
+        auto pushWithTID(F &&f, Rest &&... rest) -> std::future<decltype(f(rest...))> {
             auto pck = std::make_shared<std::packaged_task<decltype(f(rest...))()>>(
                     std::bind(std::forward<F>(f), std::forward<Rest>(rest)...));
-            auto _f = new std::function<void()>([pck]() {
+
+            auto _f = new std::function<void(int id)>([pck](int id) {
+                std::cout << "thread " << id << " starts to do task..." << std::endl << std::endl;
                 (*pck)();
+                std::cout << "thread " << id << " ends to do task" << std::endl << std::endl;
             });
+
             // 自定义 begin
             ++qNodeNum;
             // 自定义 end
+
             this->q.push(_f);
+
 //            std::unique_lock<std::mutex> lock(this->mutex);
             this->cv.notify_one();
+
             return pck->get_future();
         }
 
+        // run the user's function that excepts argument int - id of the running thread. returned value is templatized
+        // operator returns std::future, where the user can get the result and rethrow the catched exceptins
         template<typename F>
-        auto push(F && f) ->std::future<decltype(f())> {
+        auto pushWithTID(F && f) ->std::future<decltype(f())> {
             auto pck = std::make_shared<std::packaged_task<decltype(f())()>>(std::forward<F>(f));
-            auto _f = new std::function<void()>([pck]() {
+
+            auto _f = new std::function<void(int id)>([pck](int id) {
+                std::cout << "thread " << id << " starts to do task..." << std::endl << std::endl;
                 (*pck)();
+                std::cout << "thread " << id << " ends to do task" << std::endl << std::endl;
             });
+
             // 自定义 begin
             ++qNodeNum;
             // 自定义 end
+
             this->q.push(_f);
+
 //            std::unique_lock<std::mutex> lock(this->mutex);
             this->cv.notify_one();
+
             return pck->get_future();
         }
 
@@ -200,16 +216,6 @@ namespace ctpl {
 //            ++qNodeNum;
 //            this->q.push(_f);
 //        }
-
-        void pushToQ(std::function<void()> &&funcPtr) {
-            auto _f = new std::function<void()>(std::move(funcPtr));
-            ++qNodeNum;
-            this->q.push(_f);
-        }
-
-        void notifyAll(){
-            this->cv.notify_all();
-        }
 
         bool isLockFreeTaskQ(){ return q.is_lock_free();}
         //自定义end
@@ -226,8 +232,8 @@ namespace ctpl {
             std::shared_ptr<std::atomic<bool>> flag(this->flags[i]);  // a copy of the shared ptr to the flag
             auto f = [this, i, flag/* a copy of the shared ptr to the flag */]() {
                 std::atomic<bool> & _flag = *flag;
-//                std::function<void(int id)> * _f;
-                std::function<void()> *_f;
+                std::function<void(int id)> * _f;
+//                std::function<void()> *_f;
                 bool isPop = this->q.pop(_f);
                 while (true) {
                     while (isPop) {  // if there is anything in the queue
@@ -235,10 +241,10 @@ namespace ctpl {
                         --qNodeNum;
                         // 自定义 end
 
-//                        std::unique_ptr<std::function<void(int id)>> func(_f);  // at return, delete the function even if an exception occurred
-//                        (*_f)(i);
-                        std::unique_ptr<std::function<void()>> func(_f);  // at return, delete the function even if an exception occurred
-                        (*_f)();
+                        std::unique_ptr<std::function<void(int id)>> func(_f);  // at return, delete the function even if an exception occurred
+                        (*_f)(i);
+//                        std::unique_ptr<std::function<void()>> func(_f);  // at return, delete the function even if an exception occurred
+//                        (*_f)();
 
                         if (_flag)
                             return;  // the thread is wanted to stop, return even if the queue is not empty yet
@@ -266,8 +272,8 @@ namespace ctpl {
         std::vector<std::unique_ptr<std::thread>> threads;
         std::vector<std::shared_ptr<std::atomic<bool>>> flags;
         // boost::lockfree::queue requrire T boost::has_trivial_assign and  has_trivial_destructor
-//        mutable boost::lockfree::queue<std::function<void(int id)> *> q;
-        mutable boost::lockfree::queue<std::function<void()> *> q;
+        mutable boost::lockfree::queue<std::function<void(int id)> *> q;
+//        mutable boost::lockfree::queue<std::function<void()> *> q;
         std::atomic<bool> isDone;
         std::atomic<bool> isStop;
         std::atomic<int> nWaiting;  // how many threads are waiting
